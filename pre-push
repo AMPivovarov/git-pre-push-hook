@@ -1,0 +1,59 @@
+#!/usr/bin/env python
+
+import os
+import sys
+import subprocess
+import re
+
+def cmd(args):
+	process = subprocess.Popen(args, stdout = subprocess.PIPE)
+	result = process.stdout.read()
+	result = result.strip()
+	return result.decode()
+
+def git_config(key):
+	return cmd(['git', 'config', '%s' % (key)])
+
+def git_command_line():
+	# TODO: Win/MacOS ?
+	return cmd(['ps', '-ocommand', '--no-headers', '-p', '%s' % (os.getppid())])
+
+remote = sys.argv[1]
+remote_url = sys.argv[2]
+
+protected_remotes=git_config("hooks.pushforceprotectedremotes")
+protected_branches=git_config("hooks.pushforceprotectedbranches")
+
+z40="0000000000000000000000000000000000000000"
+
+remotes_re = re.compile(protected_remotes)
+branches_re = re.compile(protected_branches)
+force_re = re.compile(" -f | -f$| --force | --force$")
+
+if not remotes_re.match(remote):
+	# Not a protected remote
+	sys.exit(0)
+
+push_command = git_command_line()
+is_force = not force_re.search(push_command) is None
+
+exit_code = 0
+for line in sys.stdin.readlines():
+	local_ref, local_sha, remote_ref, remote_sha = line.strip().split(' ')
+
+	is_protected = not branches_re.match(remote_ref) is None
+
+	if local_sha == z40:
+		# Handle delete
+		if is_protected:
+			print("[pre push] Prevented attempt to delete '%s'" % (remote_ref))
+			exit_code = 1
+	elif remote_sha == z40:
+		# New branch, allow
+		pass
+	else:
+		if is_protected and is_force:
+			print ("[pre push] Prevented attempt to force push '%s'" % (remote_ref))
+			exit_code=1
+
+sys.exit(exit_code)
